@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Neura — Pv2.0.0</title>
+  <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Rajdhani:wght@400;600;700&display=swap" rel="stylesheet"/>
+  <link rel="stylesheet" href="interface.css"/>
+</head>
+<body>
+
+  <!-- SIDEBAR -->
+  <aside id="sidebar" class="sidebar">
+    <div class="sidebar-header">
+      <span class="sidebar-title">// HISTÓRICO</span>
+      <button class="sidebar-close" onclick="toggleSidebar()">✕</button>
+    </div>
+    <div id="session-list" class="session-list">
+      <p class="sidebar-loading">// carregando...</p>
+    </div>
+  </aside>
+
+  <div id="overlay" class="overlay" onclick="toggleSidebar()"></div>
+
+  <!-- APP -->
+  <div class="app">
+
+    <!-- HEADER -->
+    <header>
+      <button class="menu-btn" onclick="toggleSidebar()">☰</button>
+
+      <!-- ARC REACTOR / HUD LOGO -->
+      <div class="hud-logo">
+        <div class="hud-ring r1"></div>
+        <div class="hud-ring r2"></div>
+        <div class="hud-ring r3"></div>
+        <div class="hud-tick tk1"></div>
+        <div class="hud-tick tk2"></div>
+        <div class="hud-tick tk3"></div>
+        <div class="hud-tick tk4"></div>
+        <div class="hud-core"></div>
+      </div>
+
+      <!-- TITLE -->
+      <div class="header-info">
+        <h1>NEURA</h1>
+        <span>ALPHA°»v2.0.0« · SISTEMA ATIVO</span>
+      </div>
+
+      <div class="status-dot"></div>
+
+      <!-- RIGHT DATA PANEL -->
+      <div class="header-data">
+
+        <div class="data-block">
+          <div class="data-label">STATUS</div>
+          <div class="data-value accent" id="session-label">ONLINE</div>
+        </div>
+
+        <div class="data-sep"></div>
+
+        <!-- RELÓGIO HUD -->
+        <div class="clock-hud">
+          <div class="clock-seg">
+            <span id="clock-h">--</span>
+            <small>HRS</small>
+          </div>
+          <div class="clock-colon">:</div>
+          <div class="clock-seg">
+            <span id="clock-m">--</span>
+            <small>MIN</small>
+          </div>
+          <div class="clock-colon">:</div>
+          <div class="clock-seg">
+            <span id="clock-s">--</span>
+            <small>SEC</small>
+          </div>
+        </div>
+
+        <div class="data-sep"></div>
+
+        <div class="data-block">
+          <div class="data-label">SYS</div>
+          <div class="data-value green">NOMINAL</div>
+        </div>
+
+      </div>
+    </header>
+
+    <!-- CHAT AREA com corner brackets -->
+    <div class="chat-wrapper">
+      <div class="cbracket tl"></div>
+      <div class="cbracket tr"></div>
+      <div class="cbracket bl"></div>
+      <div class="cbracket br"></div>
+
+      <div id="chat">
+        <div class="msg system">// sistema inicializado · aguardando mestre</div>
+      </div>
+    </div>
+
+    <!-- FOOTER / INPUT -->
+    <footer id="input-area">
+      <div class="input-row">
+        <span class="input-label">CMD&gt;</span>
+        <input type="text" id="textInput" placeholder="Fale com a Neura..." autocomplete="off"/>
+        <button id="btnEnviar" onclick="enviar()"><span>ENVIAR</span></button>
+      </div>
+      <div class="footer-bar">
+        <span class="hint">ENTER para enviar · ESC para limpar</span>
+        <span class="footer-status">
+          <span class="ft-dot"></span>NEURA PRONTA
+        </span>
+      </div>
+    </footer>
+
+  </div>
+
+  <script src="interface.js"></script>
+</body>
+</html>

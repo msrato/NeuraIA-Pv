@@ -1,0 +1,16 @@
+# Ambientes Virtuais
+venv/
+.venv/
+env/
+
+# Credenciais e Configurações Secretas
+.env
+
+# Arquivos de Banco de Dados Locais Antigos
+*.db
+*.db-journal
+
+# Pastas inúteis do sistema e do Python
+__pycache__/
+*.pyc
+.DS_Store
