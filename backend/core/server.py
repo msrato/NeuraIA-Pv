@@ -5,12 +5,13 @@ API Flask conectada ao MongoDB Atlas.
 
 from dotenv import load_dotenv
 from pathlib import Path
-load_dotenv(dotenv_path=Path(__file__).parent / ".env")
+# Correção cirúrgica do caminho: volta 3 níveis para achar o .env na raiz do projeto
+load_dotenv(dotenv_path=Path(__file__).parent.parent / ".env")
 
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-from mind import decidir_resposta
-from memory import (
+from backend.core.mind import decidir_resposta
+from backend.Cortex.modules.memory.database import (
     get_all_sessions,
     get_messages_by_session,
     get_important_memories,
@@ -115,8 +116,6 @@ def rename_session(session_id):
     renomear_sessao(session_id, novo_nome)
     return jsonify({"ok": True})
 
-
-# ── Entrypoint ─────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     app.run(host="127.0.0.1", port=5000, debug=True)
