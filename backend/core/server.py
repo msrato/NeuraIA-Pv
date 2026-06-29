@@ -3,9 +3,13 @@ server.py — Neura v2.0.0
 API Flask conectada ao MongoDB Atlas.
 """
 
-from dotenv import load_dotenv
+import sys
 from pathlib import Path
-# Correção cirúrgica do caminho: volta 3 níveis para achar o .env na raiz do projeto
+# Garante que o Python enxergue a raiz do projeto (2 níveis acima de core/) para mapear o módulo 'backend'
+sys.path.append(str(Path(__file__).parent.parent.parent))
+
+from dotenv import load_dotenv
+# Correção do caminho: volta 2 níveis para achar o .env na raiz do backend
 load_dotenv(dotenv_path=Path(__file__).parent.parent / ".env")
 
 from flask import Flask, request, jsonify

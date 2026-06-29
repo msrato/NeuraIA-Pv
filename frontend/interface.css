@@ -19,6 +19,10 @@
   --cyan:      #00ccff;
   --cyan-dim:  rgba(0, 204, 255, 0.12);
   --green:     #00ff88;
+
+  /* Azul de contraste — usado nos detalhes do reator que eram amarelos no original */
+  --blue2:      #2f6bff;
+  --blue2-glow: rgba(47, 107, 255, 0.45);
   
   /* Texto */
   --text:      #d1f4ff;
@@ -73,54 +77,66 @@ body::after {
   position: relative;
 }
 
-.arc-reactor {
+.svg-frame {
   position: relative;
-  width: 200px;
-  height: 200px;
+  width: 300px;
+  height: 300px;
+  transform-style: preserve-3d;
   display: flex;
-  align-items: center;
   justify-content: center;
+  align-items: center;
 }
 
-.ar-ring {
+.svg-frame svg {
   position: absolute;
-  border-radius: 50%;
-  border: 2px solid transparent;
+  transition: .5s;
+  z-index: calc(1 - (0.2 * var(--j)));
+  transform-origin: center;
+  width: 344px;
+  height: 344px;
+  fill: none;
 }
 
-.ar-ring.r1 {
-  inset: 0;
-  border-top-color: var(--accent);
-  border-bottom-color: var(--accent);
-  animation: spinCW 6s linear infinite;
+.svg-frame:hover svg {
+  transform: rotate(-80deg) skew(30deg) translateX(calc(45px * var(--i))) translateY(calc(-35px * var(--i)));
 }
 
-.ar-ring.r2 {
-  inset: 20px;
-  border-left-color: var(--accent2);
-  border-right-color: var(--accent2);
-  border-style: dashed;
-  animation: spinCCW 4s linear infinite;
+.svg-frame svg #center {
+  transition: .5s;
+  transform-origin: center;
 }
 
-.ar-ring.r3 {
-  inset: 40px;
-  border-top-color: var(--accent);
-  animation: spinCW 2s linear infinite;
+.svg-frame:hover svg #center {
+  transform: rotate(-30deg) translateX(45px) translateY(-3px);
 }
 
-.ar-ring.r4 {
-  inset: 60px;
-  border: 1px solid var(--border);
+#out2 {
+  animation: rotate16 7s ease-in-out infinite alternate;
+  transform-origin: center;
 }
 
-.ar-glow {
-  position: absolute;
-  inset: 75px;
-  background: radial-gradient(circle, #fff 0%, var(--accent) 50%, transparent 100%);
-  border-radius: 50%;
-  box-shadow: 0 0 30px var(--accent), 0 0 60px var(--accent);
-  animation: reactorPulse 2s ease-in-out infinite;
+#out3 {
+  animation: rotate16 3s ease-in-out infinite alternate;
+  transform-origin: center;
+  stroke: var(--blue2);
+  filter: drop-shadow(0 0 6px var(--blue2-glow));
+}
+
+#inner3,
+#inner1 {
+  animation: rotate16 4s ease-in-out infinite alternate;
+  transform-origin: center;
+}
+
+#center1 {
+  fill: var(--blue2);
+  animation: rotate16 2s ease-in-out infinite alternate;
+  transform-origin: center;
+  filter: drop-shadow(0 0 5px var(--blue2-glow));
+}
+
+@keyframes rotate16 {
+  to { transform: rotate(360deg); }
 }
 
 .reactor-status {
@@ -130,10 +146,6 @@ body::after {
   color: var(--accent);
   letter-spacing: 2px;
 }
-
-@keyframes spinCW { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
-@keyframes spinCCW { from { transform: rotate(360deg); } to { transform: rotate(0deg); } }
-@keyframes reactorPulse { 0%, 100% { transform: scale(0.9); opacity: 0.8; } 50% { transform: scale(1.05); opacity: 1; } }
 
 /* ══════════════════════════════ SIDEBAR & COMPONENTES ORIGINAL AJUSTADO ══════════════════════════════ */
 .sidebar {
@@ -224,10 +236,10 @@ footer { border-top: 1px solid var(--border); background: var(--bg2); padding: 1
 
 /* ── Botão Voltar (Estilo HUD/Sci-Fi) ── */
 .back-btn {
-  display: none; /* Mantém controlado pelo JS */
+  display: none;
   appearance: none;
   -webkit-appearance: none;
-  background: rgba(192, 57, 43, 0.05); /* Fundo sutil com o vermelho base */
+  background: rgba(192, 57, 43, 0.05);
   border: 1px solid var(--accent);
   color: var(--accent2);
   font-family: var(--mono);
@@ -237,14 +249,13 @@ footer { border-top: 1px solid var(--border); background: var(--bg2); padding: 1
   padding: 6px 16px;
   cursor: pointer;
   margin-bottom: 15px;
-  align-self: flex-start; /* Alinha bem na esquerda da área de chat */
+  align-self: flex-start;
   position: relative;
   transition: all 0.25s ease-in-out;
   text-shadow: 0 0 6px rgba(231, 76, 60, 0.5);
   box-shadow: inset 0 0 8px rgba(192, 57, 43, 0.15);
 }
 
-/* Cantinhos/Brackets estéticos dentro do próprio botão */
 .back-btn::before {
   content: '[';
   margin-right: 6px;
@@ -260,7 +271,6 @@ footer { border-top: 1px solid var(--border); background: var(--bg2); padding: 1
   display: inline-block;
 }
 
-/* Efeito de Hover (Glow Neon) */
 .back-btn:hover {
   background: rgba(192, 57, 43, 0.15);
   color: #fff;
@@ -269,7 +279,6 @@ footer { border-top: 1px solid var(--border); background: var(--bg2); padding: 1
   box-shadow: 0 0 12px rgba(231, 76, 60, 0.3), inset 0 0 10px rgba(192, 57, 43, 0.3);
 }
 
-/* Animaçãozinha nos colchetes quando passa o mouse */
 .back-btn:hover::before { transform: translateX(-2px); }
 .back-btn:hover::after { transform: translateX(2px); }
 
@@ -277,7 +286,6 @@ footer { border-top: 1px solid var(--border); background: var(--bg2); padding: 1
   transform: scale(0.96);
 }
 
-/* Mantém a classe que o JavaScript usa para mostrar o botão */
 .back-btn.visible { 
   display: inline-flex; 
   align-items: center;

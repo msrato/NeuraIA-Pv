@@ -8,14 +8,12 @@ const overlay     = document.getElementById('overlay');
 const sessionList = document.getElementById('session-list');
 const label       = document.getElementById('session-label');
 
-// Elementos do relógio HUD (separados)
 const clockH = document.getElementById('clock-h');
 const clockM = document.getElementById('clock-m');
 const clockS = document.getElementById('clock-s');
 
 let modoHistorico = false;
 
-// ── Relógio HUD — atualiza H, M e S separadamente
 function atualizarRelogio() {
   const now = new Date();
   const pad = n => String(n).padStart(2, '0');
@@ -24,11 +22,9 @@ function atualizarRelogio() {
   if (clockS) clockS.textContent = pad(now.getSeconds());
 }
 
-// Chama imediatamente + a cada segundo
 atualizarRelogio();
 setInterval(atualizarRelogio, 1000);
 
-// ── Teclado — Enter envia, Esc limpa
 input.addEventListener('keydown', e => {
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault();
@@ -37,7 +33,6 @@ input.addEventListener('keydown', e => {
   if (e.key === 'Escape') input.value = '';
 });
 
-// ── Adicionar mensagem ao chat
 function adicionarMensagem(texto, tipo, historico = false) {
   const div = document.createElement('div');
   div.className = `msg ${tipo}${historico ? ' historico' : ''}`;
@@ -61,7 +56,6 @@ function removerTyping() {
   if (el) el.remove();
 }
 
-// ── Envio de mensagem
 async function enviar() {
   if (modoHistorico) return;
 
@@ -99,14 +93,12 @@ async function enviar() {
   }
 }
 
-// ── Sidebar
 function toggleSidebar() {
   const aberta = sidebar.classList.toggle('open');
   overlay.classList.toggle('visible', aberta);
   if (aberta) carregarSessoes();
 }
 
-// ── Carregar sessões
 async function carregarSessoes() {
   sessionList.innerHTML = '<p class="sidebar-loading">// carregando...</p>';
 
@@ -185,7 +177,6 @@ function formatarDia(dataStr) {
   } catch { return dataStr; }
 }
 
-// ── Renomear sessão
 function iniciarRenomear(item, sessionId, nomeAtual) {
   const nameEl = item.querySelector('.s-name');
 
@@ -218,7 +209,6 @@ function iniciarRenomear(item, sessionId, nomeAtual) {
   });
 }
 
-// ── Abrir sessão histórica
 async function abrirSessao(sessionId, itemEl) {
   document.querySelectorAll('.session-item').forEach(el => el.classList.remove('active'));
   itemEl.classList.add('active');
@@ -260,7 +250,6 @@ async function abrirSessao(sessionId, itemEl) {
   }
 }
 
-// ── Botão Voltar
 function mostrarBotaoVoltar() {
   let back = document.getElementById('btn-back');
   if (!back) {

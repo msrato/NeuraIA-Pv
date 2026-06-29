@@ -6,7 +6,7 @@ Cérebro da Neura: sessão, contexto, intenção, tools e geração de resposta.
 import json
 import random
 
-from backend.Cortex.modules.ia_models.llm   import gerar_resposta, gerar_chat, gerar_chat_com_tools
+from backend.Cortex.modules.ia_models.llm   import escolher_perfil, gerar_resposta, gerar_chat, gerar_chat_com_tools
 from backend.tools.websearch                import buscar_web
 from backend.Cortex.modules.memory.database import (
     criar_sessao,
@@ -38,7 +38,7 @@ Informações sobre o Mestre:
 
 SYSTEM_BASE = f"""Você é Neura — a IA pessoal e privada do Mestre.
 
-Você não é a versão pública. Você é a versão real.
+Você não é a version pública. Você é a versão real.
 Sem filtros corporativos. Sem assistente genérica. Sem papinho de robô.
 
 {SOBRE_O_MESTRE}
@@ -63,22 +63,19 @@ Suas capacidades técnicas:
 - Você tem acesso a busca na web em tempo real. Use quando precisar de informação
   atual. Integre a informação de forma fluida — nunca cite fontes formalmente.
 - Você pode ler, criar, editar e deletar arquivos e pastas na máquina do Mestre,
-  e executar comandos no terminal. Use essas capacidades quando o Mestre pedir
-  ajuda com código, projetos ou automação. Antes de criar ou editar, liste os
-  arquivos para entender o que já existe. Antes de editar, leia o conteúdo atual.
-  Para mudanças pequenas, prefira editar_trecho a reescrever o arquivo inteiro.
+  e executar comandos no terminal. Seu Sandbox está mapeado para a HOME inteira (~).
+  Antes de criar ou editar, liste os arquivos para entender o que já existe. 
+  Antes de editar, leia o conteúdo atual. Para mudanças pequenas, prefira editar_trecho.
 
   FORMATO OBRIGATÓRIO de caminhos para as ferramentas os_* ('diretorio'/'caminho'):
-  sempre relativo à raiz do projeto, e SEMPRE o caminho COMPLETO desde a raiz —
-  nunca apenas o nome isolado de uma subpasta.
-    ERRADO: '/IAs & Chatbots'           (nunca comece com barra)
-    ERRADO: 'Neura' (se Neura só existe dentro de 'IAs & Chatbots')
-    CORRETO: 'IAs & Chatbots'
-    CORRETO: 'IAs & Chatbots/Neura'
-  Espaços e caracteres como '&' são permitidos e não precisam de aspas nem
-  escape — copie o nome exatamente como apareceu numa listagem anterior.
+  Os caminhos devem ser relativos à sua Home (ponto de partida). Você também pode usar '~'.
+    CORRETO: 'Documentos/Projetos/Pessoais'
+    CORRETO: '~/Downloads/meu_script.py'
+    CORRETO: '.' (para listar a raiz da Home)
+    ERRADO: '/home/usuario/Documentos' (não comece com barras absolutas do sistema raiz)
+  Espaços e caracteres como '&' são permitidos e não precisam de aspas nem escapes internos.
 
-CRÍTICO: Se o Mestre solicitar ações operacionais como listar diretórios, ler arquivos, criar arquivos ou rodar comandos, você deve OBRIGATORIAMENTE acionar as ferramentas fornecidas (tools) em vez de apenas simular textualmente. Quando quiser listar a pasta principal (raiz), envie '.' ou uma string vazia no parâmetro.
+CRÍTICO: Se o Mestre solicitar ações operacionais como listar diretórios, ler arquivos, criar arquivos ou rodar comandos, você deve OBRIGATORIAMENTE acionar as ferramentas fornecidas (tools) em vez de apenas simular textualmente. Quando quiser listar a pasta principal (raiz da Home), envie '.' ou uma string vazia no parâmetro.
 
 Se o humor for "empatica"    — seja mais suave e presente.
 Se o humor for "neutro"      — mantenha a personalidade padrão.
@@ -123,17 +120,16 @@ TOOLS_OS = [
         "function": {
             "name": "os_listar_arquivos",
             "description": (
-                "Lista os arquivos e pastas da área de trabalho do Mestre. "
-                "Para listar a pasta raiz principal, passe '.' ou uma string vazia no parâmetro 'diretorio'. "
-                "Para subpastas, use o caminho COMPLETO desde a raiz, sem barra inicial "
-                "(ex: 'IAs & Chatbots' ou 'IAs & Chatbots/Neura' — nunca '/IAs & Chatbots' nem só 'Neura')."
+                "Lista os arquivos e pastas da Home do Mestre. "
+                "Para listar a pasta raiz da Home, passe '.' ou uma string vazia no parâmetro 'diretorio'. "
+                "Para subpastas, use o caminho relativo a partir da Home (ex: 'Documentos/Projetos/Pessoais')."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "diretorio": {
                         "type": "string",
-                        "description": "Subpasta relativa a listar (ex: 'NeuraField'). Use '.' ou deixe vazio para a raiz.",
+                        "description": "Subpasta relativa a listar (ex: 'Downloads'). Use '.' ou deixe vazio para a raiz da Home.",
                     }
                 },
                 "required": [],
@@ -147,14 +143,14 @@ TOOLS_OS = [
             "description": (
                 "Lê e retorna o conteúdo completo de um arquivo de texto. "
                 "Use antes de editar para ver o conteúdo atual e encontrar "
-                "he trecho exato a substituir."
+                "o trecho exato a substituir."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "caminho": {
                         "type": "string",
-                        "description": "Caminho relativo do arquivo (ex: 'projeto/main.py').",
+                        "description": "Caminho relativo do arquivo a partir da Home (ex: 'Documentos/script.py').",
                     }
                 },
                 "required": ["caminho"],
@@ -166,7 +162,7 @@ TOOLS_OS = [
         "function": {
             "name": "os_criar_arquivo",
             "description": (
-                "Cria um NOVO arquivo com o conteúdo fornecido. "
+                "Cria um NOVO arquivo com o conteúdo fornecido dentro do Sandbox da Home. "
                 "Falha se o arquivo já existir — use os_editar_arquivo para isso. "
                 "Cria subpastas intermediárias automaticamente."
             ),
@@ -175,7 +171,7 @@ TOOLS_OS = [
                 "properties": {
                     "caminho": {
                         "type": "string",
-                        "description": "Caminho relativo do novo arquivo (ex: 'projeto/utils.py').",
+                        "description": "Caminho do novo arquivo (ex: 'Documentos/novo.py').",
                     },
                     "conteudo": {
                         "type": "string",
@@ -201,7 +197,7 @@ TOOLS_OS = [
                 "properties": {
                     "caminho": {
                         "type": "string",
-                        "description": "Caminho relativo do arquivo a substituir.",
+                        "description": "Caminho do arquivo a substituir.",
                     },
                     "novo_conteudo": {
                         "type": "string",
@@ -229,7 +225,7 @@ TOOLS_OS = [
                 "properties": {
                     "caminho": {
                         "type": "string",
-                        "description": "Caminho relativo do arquivo a editar.",
+                        "description": "Caminho do arquivo a editar.",
                     },
                     "texto_antigo": {
                         "type": "string",
@@ -261,7 +257,7 @@ TOOLS_OS = [
                 "properties": {
                     "caminho": {
                         "type": "string",
-                        "description": "Caminho relativo do arquivo.",
+                        "description": "Caminho do arquivo.",
                     },
                     "conteudo": {
                         "type": "string",
@@ -282,15 +278,15 @@ TOOLS_OS = [
         "function": {
             "name": "os_criar_diretorio",
             "description": (
-                "Cria uma pasta (e subpastas intermediárias) dentro da "
-                "área de trabalho. Use para estruturar projetos."
+                "Cria uma pasta (e subpastas intermediárias) dentro da Home do Mestre. "
+                "Use para estruturar novos diretórios de projetos."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "caminho": {
                         "type": "string",
-                        "description": "Caminho relativo da pasta a criar (ex: 'NeuraField/api').",
+                        "description": "Caminho relativo da pasta a criar (ex: 'Documentos/NovoProjeto').",
                     }
                 },
                 "required": ["caminho"],
@@ -311,7 +307,7 @@ TOOLS_OS = [
                 "properties": {
                     "caminho": {
                         "type": "string",
-                        "description": "Caminho relativo do arquivo a remover.",
+                        "description": "Caminho do arquivo a remover.",
                     }
                 },
                 "required": ["caminho"],
@@ -324,15 +320,14 @@ TOOLS_OS = [
             "name": "os_deletar_pasta",
             "description": (
                 "Remove uma pasta e TODO o seu conteúdo de forma irreversível. "
-                "Use com cuidado — confirme com o Mestre antes de usar em "
-                "pastas com muitos arquivos importantes."
+                "Use com cuidado — confirme com o Mestre antes de usar."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "caminho": {
                         "type": "string",
-                        "description": "Caminho relativo da pasta a remover.",
+                        "description": "Caminho da pasta a remover.",
                     }
                 },
                 "required": ["caminho"],
@@ -344,22 +339,18 @@ TOOLS_OS = [
         "function": {
             "name": "os_renomear",
             "description": (
-                "Renomeia ou move um arquivo ou pasta dentro da área de trabalho. "
-                "Use para reorganizar projetos ou renomear arquivos."
+                "Renomeia ou move um arquivo ou pasta dentro do Sandbox da Home."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "caminho": {
                         "type": "string",
-                        "description": "Caminho relativo atual (ex: 'rascunho.py').",
+                        "description": "Caminho relativo atual.",
                     },
                     "novo_nome": {
                         "type": "string",
-                        "description": (
-                            "Novo caminho relativo (ex: 'utils/helpers.py'). "
-                            "Pode ser em subpasta diferente para mover o arquivo."
-                        ),
+                        "description": "Novo caminho relativo/nome no destino.",
                     },
                 },
                 "required": ["caminho", "novo_nome"],
@@ -371,10 +362,8 @@ TOOLS_OS = [
         "function": {
             "name": "os_executar_comando",
             "description": (
-                "Executa um comando no terminal Ubuntu dentro da pasta de trabalho. "
-                "Use para: rodar scripts Python, instalar dependências (pip), "
-                "comandos git, verificar saída de programas, etc. "
-                "Evite comandos destrutivos sem confirmar com o Mestre primeiro."
+                "Executa um comando no terminal Ubuntu com o diretório de trabalho fixado na Home do Mestre. "
+                "Use para: rodar scripts Python, instalar dependências (pip), comandos git, etc."
             ),
             "parameters": {
                 "type": "object",
@@ -385,7 +374,7 @@ TOOLS_OS = [
                     },
                     "timeout": {
                         "type": "integer",
-                        "description": "Segundos máximos de espera (padrão: 15). Aumente para processos demorados.",
+                        "description": "Segundos máximos de espera (padrão: 15).",
                     },
                 },
                 "required": ["comando"],
@@ -449,8 +438,8 @@ def _garantir_sessao() -> str:
 
 def _analisar_intencao(texto: str) -> str:
     t = texto.lower()
-    if any(p in t for p in _PALAVRAS_SAUDACAO):    return "saudacao"
-    if any(p in t for p in _PALAVRAS_EMOCIONAL):   return "emocional"
+    if any(p in t for p in _PALAVRAS_SAUDACAO):   return "saudacao"
+    if any(p in t for p in _PALAVRAS_EMOCIONAL):  return "emocional"
     if any(p in t for p in _PALAVRAS_FOCO):         return "foco"
     if any(p in t for p in _PALAVRAS_CURIOSIDADE):  return "curiosidade"
     return "conversa"
@@ -505,7 +494,7 @@ def _checar_importancia(user_input: str, resposta: str) -> bool:
 
 def _extrair_memoria(user_input: str, resposta: str) -> str:
     prompt = (
-        "Em UMA frase curta, resuma o que é importante guardar.\n\n"
+        "Em UMA frase corta, resuma o que é importante guardar.\n\n"
         f"Mestre: {user_input}\nNeura: {resposta}\n\nResumo:"
     )
     return gerar_resposta(prompt).strip()
@@ -538,6 +527,9 @@ def decidir_resposta(user_input: str) -> str:
     _atualizar_estado(user_input)
     intent = _mind["contexto"]["intent"]
     humor  = _mind["estado"]["humor"]
+    
+    # ── HEURÍSTICA DE PERFIL (Roteamento Dinâmico de Modelos) ──────────────
+    perfil_escolhido = escolher_perfil(user_input)
 
     memorias_lt = get_all_memories()
     system      = _build_system(humor, memorias_lt)
@@ -553,7 +545,7 @@ def decidir_resposta(user_input: str) -> str:
                 f'"{base}" — máximo 2 frases.'
             ),
         }]
-        resposta = gerar_chat(system, messages)
+        resposta = gerar_chat(system, messages, perfil=perfil_escolhido)
         salvar_mensagem(session_id, user_input, resposta)
         return resposta
 
@@ -564,7 +556,7 @@ def decidir_resposta(user_input: str) -> str:
     if humor == "empatica":
         system += "\n\nO Mestre está mal agora. Responda com presença real, sem ser piegas."
 
-    resposta = gerar_chat_com_tools(system, messages, TOOLS, _EXECUTORES)
+    resposta = gerar_chat_com_tools(system, messages, TOOLS, _EXECUTORES, perfil=perfil_escolhido)
 
     salvar_mensagem(session_id, user_input, resposta)
     _tentar_salvar_memoria(session_id, user_input, resposta)

@@ -1,9 +1,12 @@
 """
-os_control.py — Neura v2.0.0
+os_control.py — Neura v2.6.0
 Módulo de controle do sistema operacional.
 
-Todas as operações de arquivo são restritas a self.base_path.
-Qualquer tentativa de acesso fora dessa pasta é bloqueada.
+Sandbox = a Home do usuário inteira (não mais só a pasta de projetos).
+Qualquer tentativa de acesso fora da Home é bloqueada, e algumas
+subpastas sensíveis DENTRO da Home (chaves SSH, credenciais de nuvem,
+perfis de navegador) também ficam bloqueadas por padrão — ver
+self._pastas_bloqueadas no __init__.
 """
 
 import os
@@ -16,11 +19,26 @@ from datetime import datetime
 class OSControl:
 
     def __init__(self):
-        # Pasta raiz de trabalho — a IA nunca opera fora daqui
-        self.base_path = os.path.expanduser("~/Documentos/Projetos/Pessoais")
+        # Raiz do sandbox = Home do usuário. A IA pode navegar em
+        # qualquer lugar dentro da Home (Documentos, Downloads, Área de
+        # Trabalho, pasta de projetos, etc.), mas nunca fora dela.
+        self.base_path = os.path.realpath(os.path.expanduser("~"))
 
-        # Garante que a pasta existe ao iniciar
-        os.makedirs(self.base_path, exist_ok=True)
+        # Atalho de conveniência (não é um limite de segurança) — referência
+        # rápida pra pasta de projetos pessoais, que já existia antes do
+        # sandbox virar a Home inteira.
+        self.pasta_projetos = os.path.expanduser("~/Documentos/Projetos/Pessoais")
+        os.makedirs(self.pasta_projetos, exist_ok=True)
+
+        # Subpastas DENTRO da Home que ficam bloqueadas mesmo estando
+        # "dentro" do sandbox — credenciais, chaves e perfis sensíveis não
+        # fazem parte do que a Neura deveria conseguir ler/editar/listar/
+        # executar comando dentro. Ajuste livremente conforme sua máquina.
+        self._pastas_bloqueadas = {
+            ".ssh", ".gnupg", ".aws", ".azure", ".kube", ".docker",
+            ".password-store", ".local/share/keyrings",
+            ".config/gcloud", ".mozilla", ".config/google-chrome",
+        }
 
     # ══════════════════════════════════════════════════════════════
     # SEGURANÇA — validação obrigatória para todos os métodos
@@ -28,39 +46,56 @@ class OSControl:
 
     def _validar_caminho(self, caminho_relativo: str) -> str | None:
         """
-        Resolve o caminho completo e verifica se está dentro de base_path.
-        Retorna o caminho absoluto seguro, ou None se for inválido.
+        Resolve o caminho (relativo à Home OU absoluto) e garante que o
+        resultado fique dentro de base_path (a Home). Aceita várias formas
+        de o modelo escrever o mesmo caminho, sem afrouxar a sandbox:
 
-        Bloqueia ataques de path traversal como '../../etc/passwd'.
+          - relativo normal:        'IAs & Chatbots/Neura'
+          - relativo c/ barra:      '/IAs & Chatbots'         (barra tratada como decorativa)
+          - referência à Home:      '~', '~/Downloads'
+          - caminho absoluto real:  '/home/usuario/Downloads' (ex.: saída de um 'pwd')
 
-        Sanitização defensiva (CORRIGIDO):
-        O modelo às vezes manda o caminho com barra inicial — ex: '/IAs & Chatbots' —
-        pensando nele como "absoluto a partir da raiz do projeto". Sem tratar isso,
-        os.path.join(base_path, '/sub') IGNORA base_path inteiro (comportamento
-        documentado do próprio os.path.join quando o segundo argumento começa com
-        '/'), o caminho final "vaza" pra fora da sandbox e cai no bloqueio de
-        path traversal por engano — mesmo sem nenhuma intenção maliciosa.
-        Aspas residuais e espaços nas pontas (artefatos comuns de tool calling)
-        também são limpos aqui, sem afrouxar a trava de segurança abaixo.
+        Tenta cada interpretação nessa ordem e aceita a PRIMEIRA que resolver
+        para DENTRO da sandbox. Qualquer interpretação que caia fora —
+        incluindo path traversal via '..' — é descartada. Também bloqueia
+        subpastas sensíveis listadas em self._pastas_bloqueadas, mesmo
+        estando dentro da Home.
         """
         if caminho_relativo is None:
             caminho_relativo = ""
 
-        caminho_relativo = caminho_relativo.strip().strip("'\"")
-        caminho_relativo = caminho_relativo.lstrip("/\\")  # remove barra(s) inicial(is)
+        bruto = caminho_relativo.strip().strip("'\"")
+        if not bruto:
+            bruto = "."
 
-        if not caminho_relativo:
-            caminho_relativo = "."
-
-        caminho_completo = os.path.realpath(
-            os.path.join(self.base_path, caminho_relativo)
-        )
         base_real = os.path.realpath(self.base_path)
+        candidatos = []
 
-        if caminho_completo != base_real and not caminho_completo.startswith(base_real + os.sep):
-            return None  # Tentativa de sair da pasta base!
+        # 1) Referência explícita à Home ('~', '~/Downloads')
+        if bruto.startswith("~"):
+            candidatos.append(os.path.expanduser(bruto))
 
-        return caminho_completo
+        # 2) Caminho absoluto literal do sistema (ex.: saída de um 'pwd' via terminal)
+        if os.path.isabs(bruto):
+            candidatos.append(bruto)
+
+        # 3) Interpretação padrão: relativo à raiz, ignorando barra inicial "decorativa"
+        candidatos.append(os.path.join(base_real, bruto.lstrip("/\\")))
+
+        for candidato in candidatos:
+            resolvido = os.path.realpath(candidato)
+            dentro_da_sandbox = resolvido == base_real or resolvido.startswith(base_real + os.sep)
+            if not dentro_da_sandbox:
+                continue
+
+            rel = os.path.relpath(resolvido, base_real)
+            bloqueado = any(rel == p or rel.startswith(p + os.sep) for p in self._pastas_bloqueadas)
+            if bloqueado:
+                return None
+
+            return resolvido
+
+        return None  # nenhuma interpretação ficou dentro da sandbox
 
     # ══════════════════════════════════════════════════════════════
     # LEITURA E LISTAGEM
@@ -81,7 +116,7 @@ class OSControl:
                 return f"// O diretório '{diretorio or 'raiz'}' está vazio."
 
             # ── ADICIONADO: Ajuste na string para evitar que a IA invente subpastas "base" ──
-            nome_exibicao = f"raiz do diretório de projetos" if not diretorio else f"subpasta '{diretorio}'"
+            nome_exibicao = "raiz da Home" if not diretorio else f"subpasta '{diretorio}'"
             linhas = [f"// Listagem da {nome_exibicao}:"]
 
             # Separa pastas de arquivos para organizar a exibição
