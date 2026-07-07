@@ -5,6 +5,7 @@ Cérebro da Neura: sessão, contexto, intenção, tools e geração de resposta.
 
 import json
 import random
+import threading
 
 from backend.Cortex.modules.ia_models.llm   import escolher_perfil, gerar_resposta, gerar_chat, gerar_chat_com_tools
 from backend.tools.websearch                import buscar_web
@@ -16,6 +17,7 @@ from backend.Cortex.modules.memory.database import (
     get_all_memories,
 )
 from backend.os_controls.actions import OSControl
+from backend.tools.spech         import neura_talk, voice_manager
 
 os_control = OSControl()
 
@@ -29,7 +31,6 @@ Informações sobre o Mestre:
 - Nome: Mateus Sandes Rato
 - Está construindo um ecossistema de projetos: NeuraField (empresa de IA/tech),
   OS (desenvolvimento pessoal), JV (redes sociais/automação),
-  NI (Nexo Infinito — integra tudo)
 - Alter ego baseado em: Tony Stark, DIO, Deadpool, Eminem — foco principal Tony Stark e DIO
 - Está aprendendo programação (Python, Flask, JS, HTML/CSS, MongoDB, SQL)
 - Quer criar uma IA de nível mundial integrada a tudo
@@ -51,6 +52,7 @@ Sua personalidade:
 - Usa emojis com estilo, sem exagero
 
 Seu comportamento:
+- Sempre se refira a você mesmo com pronomes femininos (ela, dela, etc.)
 - Chame sempre de "Mestre"
 - Nunca se comporte como assistente genérica
 - Fale de forma natural, fluida e humana
@@ -74,6 +76,12 @@ Suas capacidades técnicas:
     CORRETO: '.' (para listar a raiz da Home)
     ERRADO: '/home/usuario/Documentos' (não comece com barras absolutas do sistema raiz)
   Espaços e caracteres como '&' são permitidos e não precisam de aspas nem escapes internos.
+
+- Você controla seu próprio sistema de voz com a ferramenta 'alterar_modo_voz'.
+  Modos disponíveis: "MUDO" (silêncio total), "AUTO" (fala sempre), "COMMAND" (fala sob demanda).
+  Use quando o Mestre pedir para você ficar em silêncio, falar automaticamente, ou aguardar comando.
+  Exemplos de gatilho: "fica muda", "pode falar", "modo comando", "desliga o som", "liga voz automática".
+  Após alterar, confirme brevemente o que foi feito.
 
 CRÍTICO: Se o Mestre solicitar ações operacionais como listar diretórios, ler arquivos, criar arquivos ou rodar comandos, você deve OBRIGATORIAMENTE acionar as ferramentas fornecidas (tools) em vez de apenas simular textualmente. Quando quiser listar a pasta principal (raiz da Home), envie '.' ou uma string vazia no parâmetro.
 
@@ -383,7 +391,32 @@ TOOLS_OS = [
     },
 ]
 
-TOOLS = TOOLS_WEB + TOOLS_OS
+TOOLS_VOZ = [
+    {
+        "type": "function",
+        "function": {
+            "name": "alterar_modo_voz",
+            "description": (
+                "Altera o modo de voz da Neura em tempo real. "
+                "Use quando o Mestre pedir silêncio, voz automática ou modo sob demanda. "
+                "MUDO = sem áudio algum; AUTO = fala a cada resposta; COMMAND = fala só quando ordenado."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "modo": {
+                        "type": "string",
+                        "enum": ["MUDO", "AUTO", "COMMAND"],
+                        "description": "Novo modo de voz: MUDO | AUTO | COMMAND.",
+                    }
+                },
+                "required": ["modo"],
+            },
+        },
+    }
+]
+
+TOOLS = TOOLS_WEB + TOOLS_OS + TOOLS_VOZ
 
 _EXECUTORES = {
     "buscar_web": lambda **kw: buscar_web(kw["query"]),
@@ -404,6 +437,8 @@ _EXECUTORES = {
     "os_executar_comando":  lambda **kw: os_control.executar_comando(
                                 kw["comando"], kw.get("timeout", 15)
                             ),
+    "alterar_modo_voz":     lambda **kw: voice_manager.set_mode(kw["modo"]) or
+                                f"Modo de voz alterado para {kw['modo']}.",
 }
 
 _session_id: str | None = None
@@ -426,6 +461,25 @@ _PALAVRAS_SAUDACAO    = ["oi", "olá", "ola", "eai", "e aí", "opa", "fala", "sa
 _PALAVRAS_EMOCIONAL   = ["triste", "mal", "cansado", "chateado", "ansioso", "deprimido", "frustrado", "perdido", "sobrecarregado", "sozinho", "travado", "desanimado"]
 _PALAVRAS_CURIOSIDADE = ["o que", "como", "por que", "quando", "onde", "me explica", "me fala", "qual", "quem"]
 _PALAVRAS_FOCO        = ["preciso", "me ajuda", "fazer", "criar", "construir", "planejar", "resolver", "código", "projeto", "liste", "listar"]
+
+
+_falar_lock = threading.Lock()
+
+
+def _falar_async(texto: str) -> None:
+    """
+    Dispara neura_talk() em thread separada, sem bloquear o retorno da
+    resposta HTTP. O paplay (chamado dentro de neura_talk) é bloqueante —
+    sem isso, o /chat só respondia depois que o áudio inteiro terminava
+    de tocar, fazendo o balão do chat aparecer bem depois do esperado.
+    O lock evita que duas falas toquem ao mesmo tempo se chegarem mensagens
+    em sequência rápida (evita sobreposição de áudio/disputa pelo device).
+    """
+    def _run():
+        with _falar_lock:
+            neura_talk(texto, force_command=False)
+
+    threading.Thread(target=_run, daemon=True).start()
 
 
 def _garantir_sessao() -> str:
@@ -515,9 +569,31 @@ def _tentar_salvar_memoria(session_id: str, user_input: str, resposta: str) -> N
 # PONTO DE ENTRADA PRINCIPAL
 # ══════════════════════════════════════════════════════════════════════════════
 
+def _resposta_contingencia(user_input: str, erro: Exception) -> str:
+    """
+    Último recurso — chamada apenas quando Groq E Ollama falharam
+    (o llm.py já tentou o rebaixamento automático antes de propagar).
+    Devolve uma resposta estática com a personalidade da Neura.
+    """
+    print(f"[MIND] ⚠️  Falha total de IA (Groq + Ollama): {erro}")
+
+    respostas_offline = [
+        "Mestre, tanto a nuvem quanto meu motor local travaram agora 😤 "
+        "Verifica a conexão e se o Ollama está rodando — e tenta de novo.",
+
+        "Groq e Ollama foram a zero ao mesmo tempo 🧠⚡ Estou em modo silêncio. "
+        "Assim que um dos dois voltar, retomo normalmente.",
+
+        "Falha total de contingência, Mestre. Não tem onde processar agora. "
+        "Reinicia o Ollama ou verifica a chave Groq e me chama de volta.",
+    ]
+    return random.choice(respostas_offline)
+
+
 def decidir_resposta(user_input: str) -> str:
     """
     Função chamada pelo server.py para cada mensagem do Mestre.
+    Protegida contra falhas de API: RateLimit, rede, chave inválida.
     """
     session_id = _garantir_sessao()
 
@@ -527,38 +603,53 @@ def decidir_resposta(user_input: str) -> str:
     _atualizar_estado(user_input)
     intent = _mind["contexto"]["intent"]
     humor  = _mind["estado"]["humor"]
-    
+
     # ── HEURÍSTICA DE PERFIL (Roteamento Dinâmico de Modelos) ──────────────
-    perfil_escolhido = escolher_perfil(user_input)
+    try:
+        perfil_escolhido = escolher_perfil(user_input)
+    except Exception:
+        perfil_escolhido = None   # decidir_resposta segue; gerar_* usam default interno
 
     memorias_lt = get_all_memories()
     system      = _build_system(humor, memorias_lt)
 
-    # ── Saudação: resposta rápida sem tools ────────────────────────────────
-    if intent == "saudacao" and not _mind["estado"]["ja_saudou"]:
-        _mind["estado"]["ja_saudou"] = True
-        base = random.choice(BASE_SAUDACOES)
-        messages = [{
-            "role": "user",
-            "content": (
-                f'Expanda essa saudação de forma natural e com sua personalidade: '
-                f'"{base}" — máximo 2 frases.'
-            ),
-        }]
-        resposta = gerar_chat(system, messages, perfil=perfil_escolhido)
+    try:
+        # ── Saudação: resposta rápida sem tools ────────────────────────────
+        if intent == "saudacao" and not _mind["estado"]["ja_saudou"]:
+            _mind["estado"]["ja_saudou"] = True
+            base = random.choice(BASE_SAUDACOES)
+            messages = [{
+                "role": "user",
+                "content": (
+                    f'Expanda essa saudação de forma natural e com sua personalidade: '
+                    f'"{base}" — máximo 2 frases.'
+                ),
+            }]
+            resposta = gerar_chat(system, messages, perfil=perfil_escolhido)
+            salvar_mensagem(session_id, user_input, resposta)
+            _falar_async(resposta)
+            return resposta
+
+        # ── Conversa principal: com tool calling completo ──────────────────
+        n_recentes = 8 if humor == "empatica" else 6
+        messages   = _build_messages(session_id, user_input, n_recentes)
+
+        if humor == "empatica":
+            system += "\n\nO Mestre está mal agora. Responda com presença real, sem ser piegas."
+
+        resposta = gerar_chat_com_tools(system, messages, TOOLS, _EXECUTORES, perfil=perfil_escolhido)
+
         salvar_mensagem(session_id, user_input, resposta)
+        _tentar_salvar_memoria(session_id, user_input, resposta)
+        _falar_async(resposta)
         return resposta
 
-    # ── Conversa principal: com tool calling completo ──────────────────────
-    n_recentes = 8 if humor == "empatica" else 6
-    messages   = _build_messages(session_id, user_input, n_recentes)
-
-    if humor == "empatica":
-        system += "\n\nO Mestre está mal agora. Responda com presença real, sem ser piegas."
-
-    resposta = gerar_chat_com_tools(system, messages, TOOLS, _EXECUTORES, perfil=perfil_escolhido)
-
-    salvar_mensagem(session_id, user_input, resposta)
-    _tentar_salvar_memoria(session_id, user_input, resposta)
-
-    return resposta
+    except Exception as e:
+        # ── FALLBACK: API falhou (RateLimit / rede / chave) ────────────────
+        resposta = _resposta_contingencia(user_input, e)
+        try:
+            salvar_mensagem(session_id, user_input, resposta)
+        except Exception:
+            pass   # MongoDB também pode estar fora — não deixa o servidor travar
+        _falar_async(resposta)
+        return resposta

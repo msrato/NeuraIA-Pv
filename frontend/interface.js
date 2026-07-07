@@ -13,6 +13,7 @@ const clockM = document.getElementById('clock-m');
 const clockS = document.getElementById('clock-s');
 
 let modoHistorico = false;
+let chatExpandido = false;
 
 function atualizarRelogio() {
   const now = new Date();
@@ -97,6 +98,22 @@ function toggleSidebar() {
   const aberta = sidebar.classList.toggle('open');
   overlay.classList.toggle('visible', aberta);
   if (aberta) carregarSessoes();
+}
+
+/* Alterna a expansão da tela do chat para modo cheio (Full Screen) */
+function toggleChatExpand() {
+  const bodyMain = document.getElementById('hud-body-main');
+  const toggleBtnText = document.getElementById('expand-icon-text');
+  
+  chatExpandido = !chatExpandido;
+  
+  if (chatExpandido) {
+    bodyMain.classList.add('chat-expanded');
+    toggleBtnText.textContent = '[ ] MINIMIZAR CHAT';
+  } else {
+    bodyMain.classList.remove('chat-expanded');
+    toggleBtnText.textContent = '[ ] EXPANDIR CHAT';
+  }
 }
 
 async function carregarSessoes() {

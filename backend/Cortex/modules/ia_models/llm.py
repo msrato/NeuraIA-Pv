@@ -1,32 +1,72 @@
 """
-llm.py — Neura v2.7.0 (LOCAL - OLLAMA, multi-modelo)
-Interface com a API local do Ollama, com roteamento modular por perfil.
+llm.py — Neura v2.8.0 (DUAL-CLIENT: Groq nuvem + Ollama local)
+Interface com dois backends de IA, com roteamento modular por perfil.
 
-Funções públicas:
-  escolher_perfil(texto)                                    → decide qual perfil usar
-  gerar_resposta(prompt, perfil=...)                        → chamadas internas simples
-  gerar_chat(system, messages, perfil=...)                  → conversa sem ferramentas
-  gerar_chat_com_tools(system, messages, tools, exec, perfil=...) → conversa com tool calling
+Arquitetura de clientes:
+  _client_groq  → Groq API (nuvem) — conversa, saudação, didático, segurança
+  _client_local → Ollama local     — código/OS (baixa latência), fallback offline
+
+Roteamento por perfil:
+  "conversa"    → Groq  openai/gpt-oss-120b     (rápido, fluente, poderoso)
+  "didatico"    → Groq  openai/gpt-oss-120b     (mesmo modelo, temperatura menor)
+  "seguranca"   → Groq  openai/gpt-oss-120b     (tom defensivo via system prompt)
+  "codigo"      → Local qwen2.5-coder:7b         (sem latência de rede, preciso)
+  "os"          → Local llama3.2                 (operações de SO, rápido)
+  "uncensored"  → Local dolphin-llama3:8b        (opt-in explícito apenas, nunca automático)
+
+Fallback:
+  Se Groq falhar (sem internet, rate limit, chave inválida) → Ollama local llama3.2.
+  Se Ollama também falhar → mind.py captura e chama _resposta_contingencia().
 
 NOTA SOBRE O PERFIL 'seguranca':
-  Existem modelos "uncensored" no Ollama voltados a cibersegurança ofensiva
-  (ex.: variantes WhiteRabbitNeo). Eles não entram neste roteamento — o
-  model card deles já vem com instrução pra contornar recusas de segurança,
-  o que não é algo que eu vou cabear no pipeline da Neura. O perfil
-  'seguranca' usa o MESMO modelo de código, só com temperatura mais baixa;
-  o tom defensivo/educativo vem do system prompt que o mind.py monta.
+  O perfil usa o mesmo modelo de conversa da Groq. O tom defensivo/educativo
+  vem exclusivamente do system prompt montado pelo mind.py — não há modelo
+  "uncensored" no pipeline de segurança (esses são propósitos diferentes).
+
+NOTA SOBRE O PERFIL 'uncensored':
+  Existe apenas para ser chamado manualmente (perfil="uncensored"). Não é
+  incluído em escolher_perfil() — a Neura não decide sozinha usar esse modelo.
+  Em máquina sem GPU dedicada, é sensivelmente mais lento que os perfis Groq.
 """
 
 import os
 import json
+import concurrent.futures
 from openai import OpenAI
 
-# ── Cliente Local Ollama (Formato compatível com OpenAI) ───────────────────────
+# Limite de segurança para args e resultados de tools — evita que um
+# comando (ex.: cat de um arquivo enorme) estoure o contexto do modelo
+# na próxima iteração e degrade a latência ou gere erro 400 da API.
+MAX_TOOL_RESULT_CHARS = 6000
+MAX_TOOL_ARGS_CHARS   = 20000
 
-_client = OpenAI(
+# Pool de threads compartilhado para rodar tools pesadas (I/O-bound: leitura
+# de arquivo, subprocess, listagem de diretório) em paralelo quando o modelo
+# solicita múltiplas tool_calls na mesma iteração, em vez de uma bloquear a
+# outra em sequência.
+_TOOL_POOL = concurrent.futures.ThreadPoolExecutor(max_workers=4, thread_name_prefix="neura-tool")
+
+# ══════════════════════════════════════════════════════════════════════════════
+# CLIENTES — Groq (nuvem) e Ollama (local)
+# ══════════════════════════════════════════════════════════════════════════════
+
+_GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
+
+# Cliente Groq — usado para conversa, saudação, didático e segurança
+_client_groq = OpenAI(
+    base_url="https://api.groq.com/openai/v1",
+    api_key=_GROQ_API_KEY or "sem-chave",   # placeholder evita crash no import
+) if _GROQ_API_KEY else None
+
+# Cliente Ollama — usado para código/OS e como fallback offline
+_client_local = OpenAI(
     base_url="http://localhost:11434/v1",
-    api_key="ollama"  # O Ollama local não exige chave real, mas precisa de uma string
+    api_key="ollama",
 )
+
+# Se não houver chave Groq, avisa uma vez no boot (não trava o servidor)
+if not _GROQ_API_KEY:
+    print("[LLM] ⚠️  GROQ_API_KEY não definida — todas as chamadas usarão Ollama local.")
 
 MAX_TOOL_ITS = 6      # iterações máximas do loop de tool calling
 
@@ -41,38 +81,72 @@ MAX_TOOL_ITS = 6      # iterações máximas do loop de tool calling
 # saber o nome real da tag do modelo, só o nome do perfil.
 
 PERFIS = {
-    # Conversa geral, saudação, humor emocional — a "voz" padrão da Neura
+    # Conversa geral, saudação, humor emocional — a "voz" principal da Neura (Groq)
     "conversa": {
-        "model":       "llama3.2",
+        "client":      "groq",
+        "model":       "openai/gpt-oss-120b",
         "temperatura": 0.75,
         "max_tokens":  1024,
     },
-    # Programação: debug, geração de código, revisão técnica
+    # Programação: debug, geração de código, revisão técnica (Ollama local)
     "codigo": {
-        "model":       "qwen2.5-coder:7b",
-        "temperatura": 0.30,   # mais determinístico — precisão > criatividade
-        "max_tokens":  2048,   # blocos de código costumam ser mais longos
-    },
-    # Cibersegurança — MESMO modelo de código, tom defensivo vem do system prompt
-    "seguranca": {
+        "client":      "local",
         "model":       "qwen2.5-coder:7b",
         "temperatura": 0.30,
         "max_tokens":  2048,
     },
-    # Didático — explicações, "como funciona", ensino passo a passo
-    "didatico": {
+    # Operações de SO: listar, ler, criar arquivos (Ollama local, rápido)
+    "os": {
+        "client":      "local",
         "model":       "llama3.2",
-        "temperatura": 0.55,   # menos "solto" que a conversa casual
+        "temperatura": 0.20,
+        "max_tokens":  1024,
+    },
+    # Cibersegurança — Groq com tom defensivo via system prompt do mind.py
+    "seguranca": {
+        "client":      "groq",
+        "model":       "openai/gpt-oss-120b",
+        "temperatura": 0.30,
+        "max_tokens":  2048,
+    },
+    # Didático — explicações passo a passo (Groq, temperatura menor)
+    "didatico": {
+        "client":      "groq",
+        "model":       "openai/gpt-oss-120b",
+        "temperatura": 0.55,
+        "max_tokens":  1536,
+    },
+    # ── UNCENSORED — Ollama local, dolphin-llama3:8b ────────────────────────
+    # Só é usado se 'perfil="uncensored"' for passado EXPLICITAMENTE por quem
+    # chama (mind.py, ou você manualmente). Não entra em escolher_perfil() —
+    # a Neura nunca escolhe esse perfil sozinha por heurística de palavras.
+    # Em CPU (sem GPU) é lento: espere vários segundos por resposta. Quando a
+    # 5060 Ti chegar, isso já roda rápido sem mudar nada aqui, só o driver.
+    # Requer: `ollama pull dolphin-llama3:8b`
+    "uncensored": {
+        "client":      "local",
+        "model":       "dolphin-llama3:8b",
+        "temperatura": 0.80,
         "max_tokens":  1536,
     },
 }
 
 DEFAULT_PERFIL = "conversa"
+_FALLBACK_LOCAL = {"client": "local", "model": "llama3.2", "temperatura": 0.7, "max_tokens": 1024}
 
 
-def _resolver_perfil(perfil: str) -> dict:
-    """Retorna a config do perfil, ou a config padrão se o nome não existir."""
-    return PERFIS.get(perfil, PERFIS[DEFAULT_PERFIL])
+def _resolver_perfil(perfil: str | None) -> dict:
+    """Retorna a config do perfil. Se Groq não estiver disponível, rebaixa para local."""
+    cfg = PERFIS.get(perfil or DEFAULT_PERFIL, PERFIS[DEFAULT_PERFIL])
+    if cfg["client"] == "groq" and not _client_groq:
+        # Sem chave Groq — rebaixa graciosamente para Ollama
+        return {**cfg, "client": "local", "model": "llama3.2"}
+    return cfg
+
+
+def _get_client(cfg: dict) -> OpenAI:
+    """Retorna o cliente correto baseado na config do perfil."""
+    return _client_groq if cfg["client"] == "groq" else _client_local
 
 
 # ── Heurística de roteamento (mind.py pode usar isso, ou escolher manualmente) ─
@@ -129,20 +203,37 @@ def escolher_perfil(texto: str) -> str:
 def gerar_resposta(prompt: str, perfil: str = DEFAULT_PERFIL, temperatura: float | None = None) -> str:
     """
     Single-turn sem sistema — para tarefas internas do mind.py
-    (checar importância, extrair resumo de memória). Por padrão usa o
-    perfil 'conversa'; passe 'perfil' se quiser rotear pra outro modelo.
+    (checar importância, extrair resumo de memória).
+    Tenta o cliente do perfil; se Groq falhar, rebaixa para Ollama local.
     """
-    cfg = _resolver_perfil(perfil)
+    cfg    = _resolver_perfil(perfil)
+    client = _get_client(cfg)
+    temp   = temperatura if temperatura is not None else cfg["temperatura"]
+
     try:
-        completion = _client.chat.completions.create(
+        completion = client.chat.completions.create(
             model=cfg["model"],
             messages=[{"role": "user", "content": prompt}],
-            temperature=temperatura if temperatura is not None else cfg["temperatura"],
+            temperature=temp,
             max_tokens=cfg["max_tokens"],
         )
         return (completion.choices[0].message.content or "").strip()
     except Exception as e:
-        print(f"[LLM] Erro em gerar_resposta (perfil={perfil}): {e}")
+        # Groq falhou — tenta Ollama local como fallback
+        if cfg["client"] == "groq":
+            print(f"[LLM] Groq falhou em gerar_resposta, tentando local: {e}")
+            try:
+                completion = _client_local.chat.completions.create(
+                    model=_FALLBACK_LOCAL["model"],
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=temp,
+                    max_tokens=_FALLBACK_LOCAL["max_tokens"],
+                )
+                return (completion.choices[0].message.content or "").strip()
+            except Exception as e2:
+                print(f"[LLM] Ollama também falhou em gerar_resposta: {e2}")
+        else:
+            print(f"[LLM] Erro em gerar_resposta (perfil={perfil}): {e}")
         return ""
 
 
@@ -152,14 +243,15 @@ def gerar_resposta(prompt: str, perfil: str = DEFAULT_PERFIL, temperatura: float
 
 def gerar_chat(system_prompt: str, messages: list[dict], perfil: str = DEFAULT_PERFIL) -> str:
     """
-    Gera uma resposta simples respeitando o histórico e a persona,
-    roteada pro modelo definido no perfil escolhido.
+    Gera uma resposta simples respeitando o histórico e a persona.
+    Tenta o cliente do perfil (Groq ou local); se Groq falhar, rebaixa para Ollama.
     """
-    cfg = _resolver_perfil(perfil)
+    cfg     = _resolver_perfil(perfil)
+    client  = _get_client(cfg)
     payload = [{"role": "system", "content": system_prompt}] + messages
 
     try:
-        completion = _client.chat.completions.create(
+        completion = client.chat.completions.create(
             model=cfg["model"],
             messages=payload,
             temperature=cfg["temperatura"],
@@ -167,13 +259,75 @@ def gerar_chat(system_prompt: str, messages: list[dict], perfil: str = DEFAULT_P
         )
         return (completion.choices[0].message.content or "").strip()
     except Exception as e:
+        if cfg["client"] == "groq":
+            print(f"[LLM] Groq falhou em gerar_chat, tentando local: {e}")
+            try:
+                completion = _client_local.chat.completions.create(
+                    model=_FALLBACK_LOCAL["model"],
+                    messages=payload,
+                    temperature=_FALLBACK_LOCAL["temperatura"],
+                    max_tokens=_FALLBACK_LOCAL["max_tokens"],
+                )
+                return (completion.choices[0].message.content or "").strip()
+            except Exception as e2:
+                print(f"[LLM] Ollama também falhou em gerar_chat: {e2}")
+                raise   # propaga para o try/except do mind.py
         print(f"[LLM] Erro em gerar_chat (perfil={perfil}): {e}")
-        return "Mestre, meu cérebro local deu um pequeno estalo. Pode repetir?"
+        raise
 
 
 # ══════════════════════════════════════════════════════════════════════════════
 # LOOP COMPLETO DE TOOL CALLING (CONVERSA + FUNÇÕES OPERACIONAIS)
 # ══════════════════════════════════════════════════════════════════════════════
+
+def _executar_tool(tc, executores: dict) -> str:
+    """
+    Executa um único tool_call de forma segura.
+    Garante que o resultado seja sempre uma string limpa — nunca JSON cru
+    nem traceback vazando pro chat do Mestre.
+    """
+    nome = tc.function.name
+
+    # ── Guarda contra payload de argumentos anormalmente grande ─────────────
+    raw_args = tc.function.arguments or "{}"
+    if len(raw_args) > MAX_TOOL_ARGS_CHARS:
+        print(f"[TOOL] ⚠️  Argumentos de '{nome}' excedem {MAX_TOOL_ARGS_CHARS} chars — abortando.")
+        return f"// Erro: argumentos de '{nome}' excedem o limite seguro de tamanho."
+
+    # ── Parse dos argumentos ────────────────────────────────────────────────
+    try:
+        args = json.loads(raw_args)
+        if not isinstance(args, dict):
+            raise ValueError("Argumentos não são um objeto JSON.")
+    except Exception as e:
+        print(f"[TOOL] ⚠️  JSON inválido em '{nome}': {e} | raw: {raw_args!r}")
+        return f"// Erro: argumentos malformados para '{nome}'. Tente reformular o pedido."
+
+    # ── Ferramenta desconhecida ─────────────────────────────────────────────
+    if nome not in executores:
+        print(f"[TOOL] ⚠️  Ferramenta '{nome}' não registrada.")
+        return f"// Ferramenta '{nome}' não existe. Use apenas as ferramentas disponíveis."
+
+    # ── Execução ────────────────────────────────────────────────────────────
+    try:
+        resultado = executores[nome](**args)
+        # Garante string — resultados None ou não-string são normalizados
+        resultado_str = str(resultado) if resultado is not None else "// Operação concluída sem retorno."
+    except Exception as e:
+        print(f"[TOOL] ⚠️  Erro ao executar '{nome}': {e}")
+        resultado_str = f"// Erro ao executar '{nome}': {e}"
+
+    # ── Guarda contra resultado gigante (ex.: cat de arquivo enorme) ────────
+    if len(resultado_str) > MAX_TOOL_RESULT_CHARS:
+        cortados = len(resultado_str) - MAX_TOOL_RESULT_CHARS
+        resultado_str = (
+            resultado_str[:MAX_TOOL_RESULT_CHARS]
+            + f"\n// [...truncado — {cortados} caracteres a mais omitidos para não estourar o contexto...]"
+        )
+
+    print(f"[TOOL] {nome}({_fmt_args(args)}) → {resultado_str[:120]}")
+    return resultado_str
+
 
 def gerar_chat_com_tools(
     system_prompt: str,
@@ -183,19 +337,25 @@ def gerar_chat_com_tools(
     perfil: str = DEFAULT_PERFIL,
 ) -> str:
     """
-    Loop iterativo de Tool Calling, rodando inteiro no modelo do perfil
-    escolhido (o mesmo modelo é usado em todas as iterações do loop —
-    trocar de modelo no meio do loop custaria um reload caro no Ollama).
-    Executa as funções em Python do os_control e devolve os resultados
-    ao modelo local até que ele decida gerar um texto final pro Mestre.
+    Loop iterativo de Tool Calling com roteamento dual Groq/Ollama.
+
+    Fluxo:
+      1. Usa o cliente do perfil (Groq para conversa/segurança, local para código/OS).
+      2. Se Groq falhar na PRIMEIRA iteração, rebaixa para Ollama e recomeça.
+      3. Se o modelo retornar JSON de tool cru no campo 'content' sem tool_calls,
+         o parser captura, limpa, e devolve uma mensagem amigável.
+      4. Após MAX_TOOL_ITS, força uma chamada final sem tools para fechar a resposta.
     """
     cfg    = _resolver_perfil(perfil)
+    client = _get_client(cfg)
     modelo = cfg["model"]
     payload = [{"role": "system", "content": system_prompt}] + messages
 
+    groq_rebaixado = False   # flag para não tentar rebaixar duas vezes
+
     for iteracao in range(MAX_TOOL_ITS):
         try:
-            completion = _client.chat.completions.create(
+            completion = client.chat.completions.create(
                 model=modelo,
                 messages=payload,
                 tools=tools,
@@ -204,55 +364,121 @@ def gerar_chat_com_tools(
                 max_tokens=cfg["max_tokens"],
             )
         except Exception as e:
-            print(f"[LLM] gerar_chat_com_tools — erro na API local (perfil={perfil}, iter {iteracao}): {e}")
-            return "Mestre, tive uma falha ao tentar processar essa ação no meu motor local."
+            # ── Groq caiu: rebaixa uma vez para Ollama local ────────────────
+            if cfg["client"] == "groq" and not groq_rebaixado:
+                print(f"[LLM] Groq falhou (iter {iteracao}), rebaixando para Ollama: {e}")
+                client         = _client_local
+                modelo         = _FALLBACK_LOCAL["model"]
+                cfg            = {**cfg, "client": "local",
+                                  "temperatura": _FALLBACK_LOCAL["temperatura"],
+                                  "max_tokens":  _FALLBACK_LOCAL["max_tokens"]}
+                groq_rebaixado = True
+                continue   # repete a iteração com Ollama
+            # Ollama também falhou — propaga para o mind.py tratar
+            print(f"[LLM] gerar_chat_com_tools — falha total (iter {iteracao}): {e}")
+            raise
 
         msg_resposta = completion.choices[0].message
+
+        # ── Guarda de JSON cru: modelo às vezes coloca JSON no 'content' ───
+        conteudo_bruto = (msg_resposta.content or "").strip()
+        if conteudo_bruto and not msg_resposta.tool_calls:
+            # Checa se o "texto final" é na verdade um blob JSON de tool call
+            try:
+                possivel_json = json.loads(conteudo_bruto)
+                # Se chegou aqui, o modelo cuspiu JSON — não exibe pro Mestre
+                if isinstance(possivel_json, dict) and (
+                    "name" in possivel_json or "tool_calls" in possivel_json
+                ):
+                    print(f"[LLM] ⚠️  JSON cru detectado no content (iter {iteracao}) — descartado.")
+                    return "Mestre, tive uma falha no formato da minha resposta. Pode repetir?"
+            except (json.JSONDecodeError, TypeError):
+                pass   # não é JSON — é texto legítimo, segue normal
+
         payload.append(msg_resposta)
 
-        # Se o modelo não quiser chamar nenhuma ferramenta, terminou! Retorna o texto.
+        # Sem tool_calls → o modelo quer dar uma resposta em texto → finaliza
         if not msg_resposta.tool_calls:
-            return (msg_resposta.content or "").strip()
+            return conteudo_bruto
 
-        # Execução sequencial das ferramentas solicitadas pelo modelo
-        for tc in msg_resposta.tool_calls:
-            nome = tc.function.name
+        # ── Executa cada ferramenta solicitada (em paralelo quando houver mais de uma) ──
+        # Ferramentas operacionais (comando shell, leitura/listagem de arquivo, busca web)
+        # são I/O-bound — rodá-las concorrentemente quando o modelo pede várias na mesma
+        # rodada evita que uma tool lenta (ex.: os_executar_comando) bloqueie as outras
+        # em fila, reduzindo a latência total da rodada de tools.
+        tool_calls = msg_resposta.tool_calls
+        if len(tool_calls) == 1:
+            resultados = [_executar_tool(tool_calls[0], executores)]
+        else:
+            futures = [_TOOL_POOL.submit(_executar_tool, tc, executores) for tc in tool_calls]
+            resultados = [f.result() for f in futures]
 
-            try:
-                args = json.loads(tc.function.arguments or "{}")
-            except Exception:
-                args = {}
-
-            if nome in executores:
-                try:
-                    resultado = executores[nome](**args)
-                except Exception as e:
-                    resultado = f"// Erro interno ao executar '{nome}': {e}"
-            else:
-                resultado = f"// Ferramenta '{nome}' não registrada nos executores."
-
-            print(f"[TOOL] {nome}({_fmt_args(args)}) → {resultado[:120]}")
-
-            # Resultado da tool anexado de volta ao payload para a IA ler na próxima iteração
+        for tc, resultado_str in zip(tool_calls, resultados):
             payload.append({
                 "role":         "tool",
                 "tool_call_id": tc.id,
-                "content":      resultado,
+                "content":      resultado_str,
             })
 
-    # Excedeu MAX_TOOL_ITS — tenta uma última chamada sem ferramentas para forçar resposta final
+    # ── Excedeu MAX_TOOL_ITS: força resposta final sem tools ────────────────
     print(f"[LLM] Limite de {MAX_TOOL_ITS} iterações atingido (perfil={perfil}). Forçando resposta final.")
+
+    # Reforço explícito: o histórico está cheio de mensagens no formato de
+    # tool call (rodadas anteriores). Mesmo sem 'tools' no payload, o modelo
+    # pode tentar repetir esse padrão por inércia e a Groq rejeita a chamada
+    # inteira com erro 400 ("Tool choice is none, but model called a tool").
+    # Essa instrução extra reduz drasticamente a chance disso acontecer.
+    payload_final = payload + [{
+        "role": "user",
+        "content": (
+            "Você atingiu o limite de operações desta rodada. "
+            "Responda AGORA apenas em texto puro, resumindo pro Mestre o que "
+            "foi feito até aqui. NÃO tente chamar nenhuma função ou ferramenta."
+        ),
+    }]
+
+    def _resumo_de_emergencia() -> str:
+        """
+        Último recurso: monta um resumo determinístico a partir das próprias
+        tools já executadas no payload, sem depender de nenhum modelo de IA.
+        Garante que o Mestre nunca fica sem resposta mesmo se Groq E Ollama
+        falharem nessa etapa — o trabalho das tools já foi feito de verdade,
+        só a "narração" em texto que não saiu.
+        """
+        linhas = []
+        for msg in payload:
+            if isinstance(msg, dict) and msg.get("role") == "tool":
+                linhas.append(f"- {msg.get('content', '')[:150]}")
+        corpo = "\n".join(linhas) if linhas else "nenhuma ação registrada"
+        return (
+            "Mestre, completei as operações mas tive uma falha ao gerar o "
+            f"resumo em texto. Aqui está o que foi executado:\n{corpo}"
+        )
+
     try:
-        resp = _client.chat.completions.create(
+        resp = client.chat.completions.create(
             model=modelo,
-            messages=payload,
+            messages=payload_final,
             temperature=cfg["temperatura"],
             max_tokens=cfg["max_tokens"],
         )
-        return (resp.choices[0].message.content or "").strip()
+        return (resp.choices[0].message.content or "").strip() or _resumo_de_emergencia()
     except Exception as e:
-        print(f"[LLM] Erro na chamada final pós-limite: {e}")
-        return "Mestre, atingi o limite de operações locais encadeadas. Me fala o que precisa de outra forma."
+        print(f"[LLM] Erro na chamada final pós-limite (Groq): {e}")
+        # ── Tenta Ollama antes de desistir — essa etapa nunca tentava antes ──
+        try:
+            resp2 = _client_local.chat.completions.create(
+                model=_FALLBACK_LOCAL["model"],
+                messages=payload_final,
+                temperature=_FALLBACK_LOCAL["temperatura"],
+                max_tokens=_FALLBACK_LOCAL["max_tokens"],
+            )
+            return (resp2.choices[0].message.content or "").strip() or _resumo_de_emergencia()
+        except Exception as e2:
+            print(f"[LLM] Ollama também falhou na chamada final pós-limite: {e2}")
+            # Nunca propaga daqui pra cima — o trabalho das tools já foi feito
+            # de verdade, não faz sentido tratar isso como "falha total de IA".
+            return _resumo_de_emergencia()
 
 
 # ── Helper de debug ────────────────────────────────────────────────────────────
