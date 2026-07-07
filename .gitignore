@@ -6,9 +6,10 @@ env/
 # Credenciais e Configurações Secretas
 .env
 
-# Arquivos de Banco de Dados Locais Antigos
-*.db
-*.db-journal
+#arquivos grandes de configuração
+backend/tools/kokoro_model/
+*.onnx
+*.bin
 
 # Pastas inúteis do sistema e do Python
 __pycache__/
