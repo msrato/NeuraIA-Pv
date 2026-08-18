@@ -186,7 +186,44 @@
 
   </div><!-- .app -->
 
-  <script src="interface.js"></script>
-  <script src="cerebro.js"></script>
+  <script src="./modulos/Mod_chat/chat.js"></script>
+  <script src="./modulos/Mod_recursos/relogio.js"></script>
+  <script src="./modulos/Mod_recursos/weather.js"></script>
+  <script src="./modulos/Mod_recursos/recursos.js"></script>
+  <script>
+    window.NEURA_RENDER_MODE = '3d';
+
+    function loadScript(src) {
+      return new Promise((resolve, reject) => {
+        const existing = document.querySelector(`script[src="${src}"]`);
+        if (existing) {
+          if (existing.dataset.loaded === 'true') {
+            resolve();
+            return;
+          }
+        }
+
+        const script = document.createElement('script');
+        script.src = src;
+        script.async = false;
+        script.onload = () => {
+          script.dataset.loaded = 'true';
+          resolve();
+        };
+        script.onerror = () => reject(new Error(`Falha ao carregar: ${src}`));
+        document.body.appendChild(script);
+      });
+    }
+
+    (async function initRender() {
+      try {
+        await loadScript('./interface.js');
+        await loadScript('https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js');
+        await loadScript('./cerebro3D.js');
+      } catch (err) {
+        console.error('[NEURA] Falha ao inicializar render 3D:', err);
+      }
+    })();
+  </script>
 </body>
 </html>
