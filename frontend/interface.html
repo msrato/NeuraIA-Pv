@@ -7,7 +7,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Rajdhani:wght@400;600;700&display=swap" rel="stylesheet"/>
   <!-- Vis.js — renderização do grafo neural -->
   <script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
-  <link rel="stylesheet" href="interface.css"/>
+  <link rel="stylesheet" href="./Mod_main/interface.css"/>
 </head>
 <body>
 
@@ -217,7 +217,7 @@
 
     (async function initRender() {
       try {
-        await loadScript('./interface.js');
+        await loadScript('./Mod_main/interface.js');
         await loadScript('https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js');
         await loadScript('./cerebro3D.js');
       } catch (err) {

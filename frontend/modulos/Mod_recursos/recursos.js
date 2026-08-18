@@ -46,54 +46,150 @@ const TIMEOUT_MS           = 2500;
 /* ── Elementos do DOM ─────────────────────────────────── */
 const _el = id => document.getElementById(id);
 
+/* ── Estado global do HUD ──────────────────────────────── */
+window.NEURA_HUD = window.NEURA_HUD || {
+  status: {
+    cpu: null,
+    ram: null,
+    mongo: null,
+    voz: null,
+    visao: null,
+    modelo: null,
+    clima: null,
+    localizacao: null,
+  },
+};
+
+function _normalizarTexto(value, fallback = '--') {
+  if (value === null || value === undefined || value === '') return fallback;
+  return String(value);
+}
+
 /* ── Simulação offline (Flask indisponível) ───────────── */
 function _simularRecursos() {
   const cpu = Math.floor(Math.random() * 14) + 6;
   const ram = (5.8 + Math.random() * 0.5).toFixed(1);
 
-  const cpuEl = _el('cpu-load');
-  const ramEl = _el('ram-load');
-  if (cpuEl) cpuEl.textContent = `${cpu}%`;
-  if (ramEl) ramEl.textContent = `${ram} / 16 GB`;
+  if (_el('cpu-load')) _el('cpu-load').textContent = `${cpu}%`;
+  if (_el('ram-load')) _el('ram-load').textContent = `${ram} / 16 GB`;
+
+  if (_el('hdr-voz')) _el('hdr-voz').textContent = _normalizarTexto(window.NEURA_HUD.status.voz, 'AUTO');
+  if (_el('hdr-modelo')) _el('hdr-modelo').textContent = _normalizarTexto(window.NEURA_HUD.status.modelo, 'openai/gpt-oss-120b');
+  if (_el('hdr-visao')) _el('hdr-visao').textContent = _normalizarTexto(window.NEURA_HUD.status.visao, 'INATIVO');
 }
 
 /* ── Aplica dados reais vindos da API ─────────────────── */
-function _aplicarDados(data) {
-  /* Hardware */
+function _aplicarDados(data = {}) {
   const cpuEl = _el('cpu-load');
   const ramEl = _el('ram-load');
-  if (cpuEl && data.cpu_percent   != null) cpuEl.textContent = `${data.cpu_percent}%`;
-  if (ramEl && data.ram_usado_gb  != null)
-    ramEl.textContent = `${data.ram_usado_gb} / ${data.ram_total_gb ?? '??'} GB`;
-
-  /* Status do banco */
   const mongoEl = _el('mongo-status');
+  const vozEl = _el('hdr-voz');
+  const modeloEl = _el('hdr-modelo');
+  const visaoEl = _el('hdr-visao');
+
+  if (cpuEl && data.cpu_percent != null) cpuEl.textContent = `${data.cpu_percent}%`;
+  if (ramEl && data.ram_usado_gb != null) {
+    const total = data.ram_total_gb != null ? data.ram_total_gb : '??';
+    ramEl.textContent = `${data.ram_usado_gb} / ${total} GB`;
+  }
+
   if (mongoEl && data.mongo_status) mongoEl.textContent = data.mongo_status;
 
-  /* Header — modo de voz e modelo ativo */
-  const vozEl    = _el('hdr-voz');
-  const modeloEl = _el('hdr-modelo');
-  if (vozEl    && data.voz_modo) vozEl.textContent    = data.voz_modo;
-  if (modeloEl && data.modelo)   modeloEl.textContent = data.modelo;
+  if (vozEl && data.voz_modo) {
+    const valor = data.voz_modo.toUpperCase();
+    vozEl.textContent = valor;
+    window.NEURA_HUD.status.voz = valor;
+  }
+
+  if (modeloEl && data.modelo) {
+    modeloEl.textContent = data.modelo;
+    window.NEURA_HUD.status.modelo = data.modelo;
+  }
+
+  if (visaoEl && data.visao_modo) {
+    const valor = data.visao_modo.toUpperCase();
+    visaoEl.textContent = valor;
+    window.NEURA_HUD.status.visao = valor;
+  }
+
+  if (data.status) window.NEURA_HUD.status.sistema = data.status;
+}
+
+/* ── Endpoints de fonte de dados do HUD ───────────────── */
+const HUD_API_ENDPOINTS = {
+  status: '/api/status',
+  clima: '/api/clima',
+  localizacao: '/api/localizacao',
+  visao: '/api/visao',
+  modelo: '/api/modelo',
+};
+
+async function _fetchJson(url, fallback = null, timeout = TIMEOUT_MS) {
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(timeout) });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return await res.json();
+  } catch (err) {
+    console.warn(`[HUD] Falha em ${url}:`, err.message);
+    return fallback;
+  }
 }
 
 /* ── Fetch de /api/status ─────────────────────────────── */
 async function _fetchStatus() {
-  try {
-    const res = await fetch(`${API}/api/status`, {
-      signal: AbortSignal.timeout(TIMEOUT_MS),
-    });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = await res.json();
+  const data = await _fetchJson(`${API}${HUD_API_ENDPOINTS.status}`, null, TIMEOUT_MS);
+  if (data) {
     _aplicarDados(data);
-  } catch {
-    /* Flask offline → simulação para não travar o display */
-    _simularRecursos();
+    return;
+  }
+
+  _simularRecursos();
+}
+
+/* ── Preparação para APIs em tempo real ────────────────── */
+async function _fetchLocalizacao() {
+  if (!navigator.geolocation) {
+    window.NEURA_HUD.status.localizacao = 'São Paulo';
+    return;
+  }
+
+  const pos = await new Promise(resolve => {
+    navigator.geolocation.getCurrentPosition(
+      pos => resolve({ lat: pos.coords.latitude, lon: pos.coords.longitude }),
+      () => resolve({ lat: -23.5505, lon: -46.6333 }),
+      { timeout: 5000 }
+    );
+  });
+
+  window.NEURA_HUD.status.localizacao = pos;
+  return pos;
+}
+
+async function _fetchClima() {
+  const location = await _fetchLocalizacao();
+  if (!location) return;
+
+  const data = await _fetchJson(
+    `https://api.open-meteo.com/v1/forecast?latitude=${location.lat}&longitude=${location.lon}&current=temperature_2m,weathercode&temperature_unit=celsius&timezone=auto`,
+    null,
+    6000
+  );
+
+  if (data && data.current) {
+    const tempC = data.current.temperature_2m;
+    const tempF = ((tempC * 9) / 5 + 32).toFixed(0);
+    const weatherCode = data.current.weathercode;
+    const clima = `${tempC}°C / ${tempF}°F · ${weatherCode ?? 'offline'}`;
+    const climaEl = _el('hdr-clima');
+    if (climaEl) climaEl.textContent = clima;
+    window.NEURA_HUD.status.clima = clima;
   }
 }
 
 /* ── Init ─────────────────────────────────────────────── */
 window.addEventListener('DOMContentLoaded', () => {
   _fetchStatus();
+  _fetchClima();
   setInterval(_fetchStatus, INTERVALO_RECURSOS_S * 1000);
+  setInterval(_fetchClima, 10 * 60 * 1000);
 });
