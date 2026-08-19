@@ -5,19 +5,13 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>N.E.U.R.A. v2.8.6 — Interface Sináptica Holográfica</title>
   <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Rajdhani:wght@400;600;700&display=swap" rel="stylesheet"/>
-  <!-- Vis.js — renderização do grafo neural -->
   <script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
-  <link rel="stylesheet" href="./Mod_main/interface.css"/>
+  <link rel="stylesheet" href="interface.css"/>
 </head>
 <body>
-
-  <!-- ══ CHÃO 3D ══ -->
   <div class="grid-floor" aria-hidden="true"></div>
-
-  <!-- ══ SCANLINES ══ -->
   <div class="scanlines" aria-hidden="true"></div>
 
-  <!-- ══ SIDEBAR HISTÓRICO ══ -->
   <aside id="sidebar" class="sidebar" role="complementary" aria-label="Histórico de sessões">
     <div class="sidebar-header">
       <span class="sidebar-title">// HISTÓRICO</span>
@@ -29,10 +23,7 @@
   </aside>
   <div id="overlay" class="overlay" onclick="toggleSidebar()"></div>
 
-  <!-- ══ APP PRINCIPAL ══ -->
   <div class="app">
-
-    <!-- ── HEADER EXCLUSIVO DA NEURA ── -->
     <header class="hud-header" role="banner">
       <div class="hud-header__left">
         <button class="menu-btn" onclick="toggleSidebar()" aria-label="Abrir histórico">☰</button>
@@ -64,8 +55,7 @@
           <span class="meta-value green">PORTA 5000</span>
         </div>
         <div class="meta-sep"></div>
-        
-        <!-- Bloco de Clima e Data Estendido -->
+
         <div class="weather-hud">
           <span class="meta-label">CLIMA</span>
           <span class="meta-value text-cyan-300" id="hdr-clima">28°C / 82°F · Ensolarado</span>
@@ -82,10 +72,7 @@
       </nav>
     </header>
 
-    <!-- ── MAIN: HUD LADO A LADO ── -->
     <main class="hud-body" id="hud-body-main">
-
-      <!-- ─ PAINEL ESQUERDO: Cérebro Neural ─ -->
       <section class="brain-panel" id="panel-esquerda-cerebro" aria-label="Mapa neural de memórias">
         <div class="brain-panel__label">
           <span class="panel-tag">// REDE NEURAL DE MEMÓRIA</span>
@@ -100,10 +87,8 @@
           <span>SINCRONIZAR MEMÓRIA</span>
         </button>
 
-        <!-- Grafo Vis.js -->
         <div id="network-container" aria-label="Grafo de memórias"></div>
 
-        <!-- Legenda dos Lobos -->
         <div class="brain-legend" aria-label="Legenda de categorias">
           <span class="legend-title">// REDES ATIVAS</span>
           <div class="legend-item"><span class="legend-dot" style="background:#34D399"></span><span>Lobo Frontal — Identidade</span></div>
@@ -115,17 +100,13 @@
         </div>
       </section>
 
-      <!-- ─ PAINEL DIREITO: Chat + Inspector + Monitor ─ -->
       <aside class="right-col" id="panel-direita-col">
-
-        <!-- Chat -->
         <div class="chat-wrapper" id="chat-container" role="log" aria-label="Histórico do chat" aria-live="polite">
           <div class="cbracket tl" aria-hidden="true"></div>
           <div class="cbracket tr" aria-hidden="true"></div>
           <div class="cbracket bl" aria-hidden="true"></div>
           <div class="cbracket br" aria-hidden="true"></div>
-          
-          <!-- Botão Expandir/Colapsar Chat (Full Screen) -->
+
           <button class="fullscreen-toggle" onclick="toggleChatExpand()" id="expand-chat-btn" title="Alternar modo expandido">
             <span id="expand-icon-text">[ ] EXPANDIR CHAT</span>
           </button>
@@ -135,7 +116,6 @@
           </div>
         </div>
 
-        <!-- Inspector de Neurônio -->
         <div class="inspector-panel" id="inspector" aria-label="Inspetor de memória selecionada">
           <div class="inspector-panel__header">
             <span class="panel-tag">// DETECTANDO SINAPSE</span>
@@ -146,7 +126,6 @@
           </div>
         </div>
 
-        <!-- Monitor de Recursos -->
         <div class="resource-monitor" id="panel-recursos-hardware" aria-label="Monitor de recursos de hardware">
           <span class="panel-tag">// MONITOR DE RECURSOS</span>
           <div class="res-row"><span>CPU AMD RYZEN</span><span class="res-val accent" id="cpu-load">--%</span></div>
@@ -155,11 +134,9 @@
           <div class="res-row"><span>MONGO DATABASE</span><span class="res-val green" id="mongo-status">CONECTADO</span></div>
           <div class="res-row"><span>SESSÕES ATIVAS</span><span class="res-val accent">1 MESTRE</span></div>
         </div>
-
       </aside>
     </main>
 
-    <!-- ── FOOTER: Input ── -->
     <footer id="input-area" class="hud-footer">
       <button id="btn-back" class="back-btn" onclick="voltarSessaoAtual()" aria-label="Voltar à sessão atual">← VOLTAR</button>
       <div class="input-row">
@@ -183,13 +160,12 @@
         </span>
       </div>
     </footer>
+  </div>
 
-  </div><!-- .app -->
-
-  <script src="./modulos/Mod_chat/chat.js"></script>
-  <script src="./modulos/Mod_recursos/relogio.js"></script>
-  <script src="./modulos/Mod_recursos/weather.js"></script>
-  <script src="./modulos/Mod_recursos/recursos.js"></script>
+  <script src="../mod_chat/chat.js"></script>
+  <script src="../mod_recursos/relogio.js"></script>
+  <script src="../mod_recursos/weather.js"></script>
+  <script src="../mod_recursos/recursos.js"></script>
   <script>
     window.NEURA_RENDER_MODE = '3d';
 
@@ -217,9 +193,9 @@
 
     (async function initRender() {
       try {
-        await loadScript('./Mod_main/interface.js');
+        await loadScript('./interface.js');
         await loadScript('https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js');
-        await loadScript('./cerebro3D.js');
+        await loadScript('../mod_cerebro3d/cerebro3d.js');
       } catch (err) {
         console.error('[NEURA] Falha ao inicializar render 3D:', err);
       }
