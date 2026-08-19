@@ -1,18 +1,21 @@
-# Ambientes Virtuais
-venv/
-.venv/
-env/
+# Generated audio
+*.mp3
+*.wav
 
-# Credenciais e Configurações Secretas
-.env
-
-#arquivos grandes de configuração
-backend/tools/kokoro_model/
+# Kokoro models
 *.onnx
 *.bin
 
-# Pastas inúteis do sistema e do Python
+# Environment
+.env
+.env.*
+!.env.example
+
+# Python
 __pycache__/
-*.pyc
-.DS_Store
-requirements.txt
+*.py[cod]
+.venv/
+venv/
+
+# Logs
+*.log
