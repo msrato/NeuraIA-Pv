@@ -8,23 +8,12 @@ const overlay     = document.getElementById('overlay');
 const sessionList = document.getElementById('session-list');
 const label       = document.getElementById('session-label');
 
-const clockH = document.getElementById('clock-h');
-const clockM = document.getElementById('clock-m');
-const clockS = document.getElementById('clock-s');
+// Relógio gerenciado por relogio.js
+// Recursos e status gerenciados por recursos.js
+// Clima gerenciado por weather.js
 
 let modoHistorico = false;
 let chatExpandido = false;
-
-function atualizarRelogio() {
-  const now = new Date();
-  const pad = n => String(n).padStart(2, '0');
-  if (clockH) clockH.textContent = pad(now.getHours());
-  if (clockM) clockM.textContent = pad(now.getMinutes());
-  if (clockS) clockS.textContent = pad(now.getSeconds());
-}
-
-atualizarRelogio();
-setInterval(atualizarRelogio, 1000);
 
 input.addEventListener('keydown', e => {
   if (e.key === 'Enter' && !e.shiftKey) {
